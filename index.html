@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#f4f3ee">
-<meta name="description" content="每天一套，五分鐘的卡片分類挑戰。從回饋找到線索，看看這一局的表現。">
+<meta name="description" content="每天一套，三分鐘的卡片分類挑戰。從回饋找到線索，看看這一局的表現。">
 <title>每日分類挑戰</title>
 <style>
 :root{--bg:#f4f3ee;--paper:#fffefa;--ink:#242b29;--muted:#65716b;--line:#d9dfd7;--green:#345e4c;--pale:#e9eee5;--bad:#a83b35;--shadow:0 12px 35px #24312708;font-family:Inter,"Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif;color:var(--ink);background:var(--bg);font-synthesis:none}
@@ -22,7 +22,9 @@
 <script id="game-core">
 'use strict';
 const Core=(()=>{
- const VERSION='daily-sort-v2', ANALYSIS='conservative-v1';
+ const VERSION='daily-sort-v3', ANALYSIS='conservative-v1';
+ const DURATION=180000,SCORING={correct:100,error:-40,timeout:0,unfinished:0};
+ const scoreForResult=result=>SCORING[result]||0;
  const NAMES=['顏色','圖案','數量','框線'];
  const ERROR_NAMES={single_unexcluded_error:'新線索（單一特徵）',single_repeated_error:'重複已排除特徵',ambiguous_error:'新線索（多個特徵）',all_excluded_error:'符合特徵皆已排除',no_match_error:'沒有特徵相符'};
  function hash(s){let h=2166136261;for(let i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),16777619);return h>>>0;}
@@ -38,8 +40,8 @@ const Core=(()=>{
   const rr=random(key+'|refs'),cols=Array.from({length:4},()=>shuffle([0,1,2,3],rr));
   const refs=Array.from({length:4},(_,i)=>cols.map(col=>col[i]));
   let rules;do{rules=shuffle([0,0,1,1,2,2,3,3],rng);}while(rules.some((r,i)=>(i>0&&r===rules[i-1])||(i>1&&r===rules[i-2])));
-  const lengths=Array.from({length:4},()=>32500+Math.floor(rng()*21)*500),seen=new Set();
-  const durations=rules.map(r=>{if(seen.has(r))return 75000-lengths[r];seen.add(r);return lengths[r];});
+  const lengths=Array.from({length:4},()=>20000+Math.floor(rng()*11)*500),seen=new Set();
+  const durations=rules.map(r=>{if(seen.has(r))return 45000-lengths[r];seen.add(r);return lengths[r];});
   let sum=0;const boundaries=durations.map(d=>sum+=d);
   const pool=Array.from({length:256},(_,id)=>{const f=features(id);return{id,f,p:positions(f,refs)};});
   const sr=random(key+'|starts'),starts=[];
@@ -135,7 +137,7 @@ const Core=(()=>{
  }
  function classify(m,r,e){if(m.includes(r))return'correct';if(!m.length)return'no_match_error';if(m.length===1)return e.includes(m[0])?'single_repeated_error':'single_unexcluded_error';return m.every(d=>e.includes(d))?'all_excluded_error':'ambiguous_error';}
  function opportunity(card,refs,e){return refs.some(ref=>{const m=matched(card,ref);return m.length===1&&e.includes(m[0]);});}
- function deadline(elapsed,trialDeadline){return elapsed>=300000?'finish':elapsed>=trialDeadline?'timeout':'answer';}
+ function deadline(elapsed,trialDeadline){return elapsed>=DURATION?'finish':elapsed>=trialDeadline?'timeout':'answer';}
  function segmentAt(boundaries,elapsed){const i=boundaries.findIndex(t=>elapsed<t);return i<0?boundaries.length-1:i;}
  function median(a){if(!a.length)return null;const b=a.slice().sort((x,y)=>x-y),i=Math.floor(b.length/2);return b.length%2?b[i]:(b[i-1]+b[i])/2;}
  function summarize(trials){
@@ -143,7 +145,7 @@ const Core=(()=>{
   const timeout=trials.filter(t=>t.result==='timeout').length,unfinished=trials.filter(t=>t.result==='unfinished').length;
   const classes=Object.fromEntries(Object.keys(ERROR_NAMES).map(k=>[k,responded.filter(t=>t.errorClass===k).length]));
   const opportunities=responded.filter(t=>t.isOpportunity).length,rt=responded.map(t=>t.responseTimeMs);
-  return{score:correct*100,correct,error:responded.length-correct,timeout,unfinished,accuracy:responded.length?correct/responded.length:null,successRate:responded.length+timeout?correct/(responded.length+timeout):null,medianRT:median(rt),meanRT:rt.length?rt.reduce((a,b)=>a+b,0)/rt.length:null,correctMedianRT:median(responded.filter(t=>t.result==='correct').map(t=>t.responseTimeMs)),classes,opportunities,repeatRate:opportunities?classes.single_repeated_error/opportunities:null};
+  return{score:trials.reduce((sum,t)=>sum+scoreForResult(t.result),0),correct,error:responded.length-correct,timeout,unfinished,accuracy:responded.length?correct/responded.length:null,successRate:responded.length+timeout?correct/(responded.length+timeout):null,medianRT:median(rt),meanRT:rt.length?rt.reduce((a,b)=>a+b,0)/rt.length:null,correctMedianRT:median(responded.filter(t=>t.result==='correct').map(t=>t.responseTimeMs)),classes,opportunities,repeatRate:opportunities?classes.single_repeated_error/opportunities:null};
  }
  function mergeSessions(persisted,memory,cutoff){const map=new Map();for(const s of [...memory,...persisted])if(s.completedAt>=cutoff)map.set(s.id,s);return [...map.values()].sort((a,b)=>b.completedAt-a.completedAt);}
  function prepareSave(persisted,memory,current,cutoff){const prior=mergeSessions(persisted,memory,cutoff).filter(s=>s.challengeId===current.challengeId&&s.id!==current.id);const next={...current,ordinal:prior.length?Math.max(...prior.map(s=>s.ordinal))+1:1,saved:true};const already=new Set(persisted.map(s=>s.id));return [...memory.filter(s=>s.completedAt>=cutoff&&!already.has(s.id)&&s.id!==current.id).map(s=>({...s,saved:true})),next];}
@@ -152,7 +154,7 @@ const Core=(()=>{
   {name:'重複已排除的選擇',count:c.single_repeated_error+c.all_excluded_error,description:'所選卡片符合的特徵，在這一階段都已收到過錯誤回饋。'},
   {name:'沒有特徵相符',count:c.no_match_error,description:'所選卡片的顏色、圖案、數量與框線都不相同。'}
  ];}
- return{layout,reviewGroups,VERSION,ANALYSIS,NAMES,ERROR_NAMES,random,dateKey,features,matched,positions,makeChallenge,buildBatch,validateBatch,classify,opportunity,deadline,segmentAt,summarize,mergeSessions,prepareSave};
+ return{DURATION,SCORING,scoreForResult,layout,reviewGroups,VERSION,ANALYSIS,NAMES,ERROR_NAMES,random,dateKey,features,matched,positions,makeChallenge,buildBatch,validateBatch,classify,opportunity,deadline,segmentAt,summarize,mergeSessions,prepareSave};
 })();
 </script>
 <script id="game-ui">
@@ -177,7 +179,7 @@ function cardSVG(f,label='卡片'){
  const frame=f[3]===3?'<rect x="5" y="5" width="110" height="110" rx="5"/><rect x="10" y="10" width="100" height="100" rx="2"/>':`<rect x="6" y="6" width="108" height="108" rx="4" ${f[3]===1?'stroke-dasharray="13 8"':f[3]===2?'stroke-dasharray="1 8" stroke-linecap="round"':''}/>`;
  return `<svg viewBox="0 0 120 120" role="img" aria-label="${esc(label+'：'+colorNames[f[0]]+'色、'+(f[2]+1)+'個'+symbol+'、'+borders[f[3]])}"><g fill="none" stroke="#526059" stroke-width="${f[3]===3?1.8:2.7}">${frame}</g>${body}</svg>`;
 }
-function header(note='五分鐘，換個方式思考。'){return `<header class="topbar"><div class="brand"><span class="brandmark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>每日分類挑戰</div><span class="topnote">${esc(note)}</span></header>`;}
+function header(note='三分鐘，換個方式思考。'){return `<header class="topbar"><div class="brand"><span class="brandmark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>每日分類挑戰</div><span class="topnote">${esc(note)}</span></header>`;}
 function footer(){return '<footer class="footer"><span>本遊戲受卡片分類任務啟發，僅描述實際遊玩表現，不可作為正式心理測驗結果。</span><span>資料會留在這個瀏覽器 · 保存七天</span></footer>';}
 function notice(){return storageWarning?`<div class="notice" role="status">${esc(storageWarning)}</div>`:'';}
 const sleep=()=>new Promise(r=>setTimeout(r,0));
@@ -202,7 +204,7 @@ async function refreshRecords(){
 async function recover(){
  try{const keys=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k.startsWith(prefix+'active:'))keys.push(k);}
  for(const key of keys){let a;try{a=JSON.parse(localStorage.getItem(key));}catch{localStorage.removeItem(key);continue;}
- if(key!==markerKey&&Date.now()-a.startedAt<300000)continue;
+ if(key!==markerKey&&Date.now()-a.startedAt<(a.durationMs||300000))continue;
  if(!records.some(s=>s.id===a.id)){const old=attempts.find(x=>x.id===a.id);if(!old||old.status!=='interrupted'){a.status='interrupted';a.reason='離開或重新整理頁面';a.endedAt=Date.now();await putAttempt(a);}}
  localStorage.removeItem(key);
  }
@@ -216,19 +218,19 @@ function todayRecords(){return records.filter(s=>s.challengeId===Core.makeChalle
 function home(){
  game=null;lastDate=Core.dateKey();const today=todayRecords(),first=today.find(s=>s.ordinal===1),replays=today.filter(s=>s.ordinal>1),best=replays.length?Math.max(...replays.map(s=>s.summary.score)):null;
  const unfinished=attempts.filter(a=>a.challengeId===Core.makeChallenge(lastDate,selectedMode).id&&a.status==='interrupted').length;
- setScreen('home',header()+notice()+`<div class="home-grid"><section><div class="daily-tag"><span class="dot"></span>${lastDate.replaceAll('-',' / ')} · 今日挑戰</div><p class="eyebrow">A DAILY EXERCISE IN DISCOVERY</p><h1>看見線索，<br>找到你的節奏。</h1><p class="intro">每一次選擇，都帶來一點線索。<br>在五分鐘裡，試著找到卡片之間的關聯。</p><label for="mode" class="mode-label">挑戰模式</label><select id="mode" class="mode-select"><option value="fixed" ${selectedMode==='fixed'?'selected':''}>固定位置</option><option value="moving" ${selectedMode==='moving'?'selected':''}>每題換位</option></select><p class="tiny">${selectedMode==='moving'?'此模式每題都會更換參考卡位置，請依卡片內容配對。':'參考卡位置整局固定。'}</p><div class="actions"><button class="primary" id="start">${first?'再挑戰一次':'開始今日挑戰'} <span aria-hidden="true">↗</span></button><button class="secondary" id="history">本機紀錄</button></div><p class="tiny">${first?'今日已完成 '+today.length+' 次。首次與重玩分開記錄。':'尚未完成今日挑戰。'}${unfinished?' 已有 '+unfinished+' 次未完成嘗試。':''}</p></section><div class="preview-board" aria-hidden="true"><div class="preview-label">OBSERVE · CHOOSE · DISCOVER</div><div class="preview-grid">${[[0,0,0,0],[1,1,2,1],[2,2,3,2],[3,3,1,3]].map(f=>'<div class="preview-card">'+cardSVG(f)+'</div>').join('')}</div><div class="preview-foot">每天一套，全新線索。</div></div></div><div class="quickstats"><div><strong>05:00</strong><span>整局時間</span></div><div><strong>${first?fmt(first.summary.score):'—'}</strong><span>今日首次完成</span></div><div><strong>${best==null?'—':fmt(best)}</strong><span>今日重玩最佳</span></div></div><section class="panel"><h3>開始前，知道這些就夠了。</h3><div class="instructions"><div><span class="step-num">01</span><h3>選擇相配的卡片</h3><p>點選四張參考卡之一，替待分類卡找到你認為相配的位置。</p></div><div><span class="step-num">02</span><h3>留意每次回饋</h3><p>畫面會告訴你正確或錯誤。答對得 100 分，答錯不扣分。</p></div><div><span class="step-num">03</span><h3>給自己五分鐘</h3><p>每題最多十秒，逾時自動換題。切換分頁、離開 App、鎖屏或重新整理，都會中止挑戰。</p></div></div></section>`+footer());
+ setScreen('home',header()+notice()+`<div class="home-grid"><section><div class="daily-tag"><span class="dot"></span>${lastDate.replaceAll('-',' / ')} · 今日挑戰</div><p class="eyebrow">A DAILY EXERCISE IN DISCOVERY</p><h1>看見線索，<br>找到你的節奏。</h1><p class="intro">每一次選擇，都帶來一點線索。<br>在三分鐘裡，試著找到卡片之間的關聯。</p><label for="mode" class="mode-label">挑戰模式</label><select id="mode" class="mode-select"><option value="fixed" ${selectedMode==='fixed'?'selected':''}>固定位置</option><option value="moving" ${selectedMode==='moving'?'selected':''}>每題換位</option></select><p class="tiny">${selectedMode==='moving'?'此模式每題都會更換參考卡位置，請依卡片內容配對。':'參考卡位置整局固定。'}</p><div class="actions"><button class="primary" id="start">${first?'再挑戰一次':'開始今日挑戰'} <span aria-hidden="true">↗</span></button><button class="secondary" id="history">本機紀錄</button></div><p class="tiny">${first?'今日已完成 '+today.length+' 次。首次與重玩分開記錄。':'尚未完成今日挑戰。'}${unfinished?' 已有 '+unfinished+' 次未完成嘗試。':''}</p></section><div class="preview-board" aria-hidden="true"><div class="preview-label">OBSERVE · CHOOSE · DISCOVER</div><div class="preview-grid">${[[0,0,0,0],[1,1,2,1],[2,2,3,2],[3,3,1,3]].map(f=>'<div class="preview-card">'+cardSVG(f)+'</div>').join('')}</div><div class="preview-foot">每天一套，全新線索。</div></div></div><div class="quickstats"><div><strong>03:00</strong><span>整局時間</span></div><div><strong>${first?fmt(first.summary.score):'—'}</strong><span>今日首次完成</span></div><div><strong>${best==null?'—':fmt(best)}</strong><span>今日重玩最佳</span></div></div><section class="panel"><h3>開始前，知道這些就夠了。</h3><div class="instructions"><div><span class="step-num">01</span><h3>選擇相配的卡片</h3><p>點選四張參考卡之一，替待分類卡找到你認為相配的位置。</p></div><div><span class="step-num">02</span><h3>留意每次回饋</h3><p>畫面會告訴你正確或錯誤。答對加 100 分，答錯扣 40 分；分數可以為負，逾時不扣分。</p></div><div><span class="step-num">03</span><h3>給自己三分鐘</h3><p>每題最多十秒，逾時自動換題。切換分頁、離開 App、鎖屏或重新整理，都會中止挑戰。</p></div></div></section>`+footer());
  $('mode').onchange=()=>{selectedMode=$('mode').value;home();};$('start').onclick=start;$('history').onclick=historyView;
 }
 async function start(){
  if(screen==='preparing'||screen==='game')return;
  const date=Core.dateKey();
- setScreen('preparing',header()+`<div class="loading"><p class="eyebrow">GETTING READY</p><h2>正在準備今天的卡片</h2><p class="tiny" id="loadstatus">確認每日規則與卡片分布…</p><progress id="progress" value="0" max="8"></progress><p class="tiny">準備時間不計入五分鐘。</p></div>`);
+ setScreen('preparing',header()+`<div class="loading"><p class="eyebrow">GETTING READY</p><h2>正在準備今天的卡片</h2><p class="tiny" id="loadstatus">確認每日規則與卡片分布…</p><progress id="progress" value="0" max="8"></progress><p class="tiny">準備時間不計入三分鐘。</p></div>`);
  try{
   await sleep();const c=Core.makeChallenge(date,selectedMode),batches=[];
   for(let s=0;s<8;s++){await sleep();const cards=Core.buildBatch(c,s);const errors=Core.validateBatch(c,s,cards);if(errors.length)throw new Error('卡片驗證失敗：'+errors.join(', '));batches.push(cards);$('progress').value=s+1;$('loadstatus').textContent='已驗證 '+(s+1)+' / 8 組卡片';}
   if(document.hidden){setScreen('interrupted',header()+'<div class="empty"><h2>請保持頁面開啟</h2><p>準備完成時頁面已離開，尚未開始挑戰。</p><button class="primary" id="back">返回首頁</button></div>');$('back').onclick=home;return;}
   if(date!==Core.dateKey()){home();return;}
-  const id=uid(),startedAt=Date.now(),attempt={id,challengeId:c.id,startedAt,status:'active',tabId};
+  const id=uid(),startedAt=Date.now(),attempt={id,challengeId:c.id,startedAt,durationMs:Core.DURATION,status:'active',tabId};
   try{await putAttempt(attempt);}catch{storageWarning='本局可以進行，但本機紀錄可能無法保存。';}
   markActive(attempt);
   game={id,c,batches,batchNos:Array(8).fill(0),indices:Array(8).fill(0),excluded:Array.from({length:8},()=>[]),trials:[],current:null,startedAt,attempt,status:'active',startedMono:0,lastFrame:0,pendingFeedback:null,score:0};
@@ -236,7 +238,7 @@ async function start(){
  }catch(error){setScreen('error',header()+`<div class="empty"><h2>今天的題目準備失敗</h2><p>${esc(error.message)}</p><p class="tiny">沒有啟動計時或產生成績。可以重試，或將此訊息提供給開發者。</p><button class="primary" id="back">返回首頁</button></div>`);$('back').onclick=home;}
 }
 function renderGame(){
- setScreen('game',header(game.c.date+' · '+modeName(game.c.mode))+`<div class="game-hud"><div><span class="hud-label">剩餘時間</span><span class="time" id="total-time">05:00</span></div><div><span class="hud-label">本局得分</span><div class="score" id="score">0</div></div></div><div class="feedback-wrap" aria-live="polite" aria-atomic="true"><div class="feedback" id="feedback"></div></div><p class="board-caption">選擇你認為相配的參考卡</p><div class="references">${game.c.refs.map((f,i)=>`<button class="reference" data-index="${i}" aria-label="選擇參考卡 ${i+1}" disabled>${cardSVG(f,'參考卡 '+(i+1))}</button>`).join('')}</div><div class="current-wrap"><p class="board-caption">待分類卡</p><div class="current-card" id="current-card"></div><div class="trial-time"><div class="trial-track"><div class="trial-fill" id="trial-fill"></div></div><span class="trial-number" id="trial-time">10.0</span></div></div><div class="game-foot"><span class="tiny">每題最多十秒 · 離開頁面會中止本局</span></div>`,'game-shell');
+ setScreen('game',header(game.c.date+' · '+modeName(game.c.mode))+`<div class="game-hud"><div><span class="hud-label">剩餘時間</span><span class="time" id="total-time">03:00</span></div><div><span class="hud-label">本局得分</span><div class="score" id="score">0</div></div></div><div class="feedback-wrap" aria-live="polite" aria-atomic="true"><div class="feedback" id="feedback"></div></div><p class="board-caption">選擇你認為相配的參考卡</p><div class="references">${game.c.refs.map((f,i)=>`<button class="reference" data-index="${i}" aria-label="選擇參考卡 ${i+1}" disabled>${cardSVG(f,'參考卡 '+(i+1))}</button>`).join('')}</div><div class="current-wrap"><p class="board-caption">待分類卡</p><div class="current-card" id="current-card"></div><div class="trial-time"><div class="trial-track"><div class="trial-fill" id="trial-fill"></div></div><span class="trial-number" id="trial-time">10.0</span></div></div><div class="game-foot"><span class="tiny">每題最多十秒 · 離開頁面會中止本局</span></div>`,'game-shell');
  document.querySelectorAll('.reference').forEach(button=>{
   let pointerTrial=null,keyTrial=null;
   const token=()=>game?.status==='active'&&!game.locked&&game.current?game.id+':'+game.current.trialId:null;
@@ -250,7 +252,7 @@ function deal(elapsed){
  if(i>=g.batches[s].length){const extra=Core.buildBatch(g.c,s,++g.batchNos[s],g.batches[s]);const err=Core.validateBatch(g.c,s,extra,g.batches[s]);if(err.length)throw new Error('延伸卡片驗證失敗');g.batches[s].push(...extra);}
  const cardId=g.batches[s][i],f=Core.features(cardId),shown=performance.now()-g.startedMono;
  // If preparation crossed the global deadline, do not create a fictitious card.
- if(shown>=300000){finish();return;}
+ if(shown>=Core.DURATION){finish();return;}
  const rule=g.c.rules[s],e=g.excluded[s].slice(),referenceOrder=Core.layout(g.c,s,i),refs=referenceOrder.map(id=>g.c.refs[id]);
  g.current={trialId:g.trials.length+1,segmentId:s,indexWithinSegment:i+1,referenceOrder,cardId,features:f,activeRule:rule,previousRule:s?g.c.rules[s-1]:null,shownAtElapsedMs:shown,deadlineElapsedMs:shown+10000,excludedBefore:e,correctIndex:Core.positions(f,refs)[rule],isOpportunity:Core.opportunity(f,refs,e),result:null};g.indices[s]++;
  $('current-card').innerHTML=cardSVG(f,'待分類卡');document.querySelectorAll('.reference').forEach((b,j)=>{b.innerHTML=cardSVG(refs[j],'參考卡');b.disabled=false;});updateClocks(shown);
@@ -258,11 +260,11 @@ function deal(elapsed){
 function flushFeedback(){const g=game;if(!g||!g.pendingFeedback)return;const t=g.pendingFeedback;t.feedbackPresented=true;if(t.result==='error')g.excluded[t.segmentId]=[...new Set([...g.excluded[t.segmentId],...t.matchedFeatures])];g.pendingFeedback=null;}
 function feedback(t){
  feedbackTimers.forEach(clearTimeout);const el=$('feedback');if(!el)return;
- el.textContent=t.result==='correct'?'上一題：✓ 正確 +100':t.result==='error'?'上一題：× 錯誤':'上一題：逾時';el.className='feedback show'+(t.result==='correct'?'':' bad');
+ el.textContent=t.result==='correct'?'上一題：✓ 正確 +100':t.result==='error'?'上一題：× 錯誤 −40':'上一題：逾時';el.className='feedback show'+(t.result==='correct'?'':' bad');
  app.className=t.result==='correct'?'feedback-success':'feedback-error';
  feedbackTimers=[setTimeout(()=>{if(screen==='game'){el.classList.add('fade');app.className='';}},800),setTimeout(()=>{if(screen==='game')el.className='feedback';},1200)];
 }
-function updateClocks(elapsed){if(screen!=='game')return;$('total-time').textContent=clock(300000-elapsed);$('total-time').classList.toggle('low',elapsed>=280000);if(game.current){const left=Math.max(0,game.current.deadlineElapsedMs-elapsed);$('trial-time').textContent=(left/1000).toFixed(1);$('trial-fill').style.width=(left/100)+'%';$('trial-fill').style.background=left<3000?'var(--bad)':'var(--green)';}}
+function updateClocks(elapsed){if(screen!=='game')return;$('total-time').textContent=clock(Core.DURATION-elapsed);$('total-time').classList.toggle('low',elapsed>=Core.DURATION-20000);if(game.current){const left=Math.max(0,game.current.deadlineElapsedMs-elapsed);$('trial-time').textContent=(left/1000).toFixed(1);$('trial-fill').style.width=(left/100)+'%';$('trial-fill').style.background=left<3000?'var(--bad)':'var(--green)';}}
 function tick(now){
  const g=game;if(!g||g.status!=='active')return;
  if(document.hidden){interrupt('離開頁面');return;}
@@ -288,7 +290,7 @@ function settle(index,elapsed){
  const e=g.excluded[t.segmentId].slice(),refs=t.referenceOrder.map(id=>g.c.refs[id]);t.excludedBefore=e;t.isOpportunity=index!==null&&Core.opportunity(t.features,refs,e);
  t.chosenIndex=index;t.answeredAtElapsedMs=index===null?null:elapsed;t.responseTimeMs=index===null?null:elapsed-t.shownAtElapsedMs;t.matchedFeatures=index===null?[]:Core.matched(t.features,refs[index]);
  t.errorClass=index===null?null:Core.classify(t.matchedFeatures,t.activeRule,e);t.result=index===null?'timeout':t.errorClass==='correct'?'correct':'error';t.feedbackPresented=false;
- if(t.result==='correct'){g.score+=100;$('score').textContent=fmt(g.score);}
+ g.score+=Core.scoreForResult(t.result);$('score').textContent=fmt(g.score);
  g.trials.push(t);g.pendingFeedback=t;feedback(t);
  try{deal(elapsed);}catch{interrupt('題目準備失敗');return;}
  // One rendered frame separates physical input events, without a fixed waiting animation.
@@ -298,7 +300,7 @@ async function finish(){
  const g=game;if(!g||g.status!=='active')return;g.status='finished';cancelAnimationFrame(frameHandle);flushFeedback();
  if(g.current){g.trials.push({...g.current,result:'unfinished',chosenIndex:null,answeredAtElapsedMs:null,responseTimeMs:null,matchedFeatures:[],errorClass:null,feedbackPresented:false,isOpportunity:false});g.current=null;}
  const completedAt=Date.now(),existing=records.filter(s=>s.challengeId===g.c.id),ordinal=existing.length?Math.max(...existing.map(s=>s.ordinal))+1:1;
- const s={id:g.id,challengeId:g.c.id,date:g.c.date,mode:g.c.mode,version:Core.VERSION,analysisVersion:Core.ANALYSIS,startedAt:g.startedAt,completedAt,ordinal,summary:Core.summarize(g.trials),trials:g.trials,refs:g.c.refs,rules:g.c.rules,durations:g.c.durations,boundaries:g.c.boundaries,priorInterruptedAttempts:attempts.filter(a=>a.challengeId===g.c.id&&a.status==='interrupted').length};
+ const s={id:g.id,challengeId:g.c.id,date:g.c.date,mode:g.c.mode,durationMs:Core.DURATION,scoring:{...Core.SCORING},version:Core.VERSION,analysisVersion:Core.ANALYSIS,startedAt:g.startedAt,completedAt,ordinal,summary:Core.summarize(g.trials),trials:g.trials,refs:g.c.refs,rules:g.c.rules,durations:g.c.durations,boundaries:g.c.boundaries,priorInterruptedAttempts:attempts.filter(a=>a.challengeId===g.c.id&&a.status==='interrupted').length};
  let saved=false;
  if(db)try{
   const t=db.transaction(['sessions','attempts'],'readwrite'),done=txDone(t),store=t.objectStore('sessions');const all=await req(store.getAll());
@@ -313,20 +315,21 @@ function interrupt(reason){
  const g=game;if(!g||g.status!=='active')return;g.status='interrupted';cancelAnimationFrame(frameHandle);feedbackTimers.forEach(clearTimeout);
  const a={...g.attempt,status:'interrupted',reason,endedAt:Date.now()};markActive(a);attempts=[a,...attempts.filter(x=>x.id!==a.id)];
  putAttempt(a).then(()=>{if(db)unmark(a.id);}).catch(()=>{});
- setScreen('interrupted',header()+`<div class="empty"><div class="interrupt-icon" aria-hidden="true">Ⅱ</div><p class="eyebrow">CHALLENGE INTERRUPTED</p><h2>這一局已中斷</h2><p>${esc(reason)}。為保持完整的五分鐘體驗，<br>請重新開始挑戰。</p><p class="tiny">不計入完成紀錄，也不占用首次完成。<br>重新開始會使用今日的同一套題目。</p><div class="actions" style="justify-content:center"><button class="primary" id="restart">開始今日挑戰</button><button class="secondary" id="back">返回首頁</button></div></div>`);
+ setScreen('interrupted',header()+`<div class="empty"><div class="interrupt-icon" aria-hidden="true">Ⅱ</div><p class="eyebrow">CHALLENGE INTERRUPTED</p><h2>這一局已中斷</h2><p>${esc(reason)}。為保持完整的三分鐘體驗，<br>請重新開始挑戰。</p><p class="tiny">不計入完成紀錄，也不占用首次完成。<br>重新開始會使用今日的同一套題目。</p><div class="actions" style="justify-content:center"><button class="primary" id="restart">開始今日挑戰</button><button class="secondary" id="back">返回首頁</button></div></div>`);
  $('restart').onclick=start;$('back').onclick=home;
 }
 function resultView(s,saved=true){
  selectedMode=s.mode==='moving'?'moving':'fixed';
+ const minutes=(s.durationMs||s.durations.reduce((sum,t)=>sum+t,0))/60000,penalty=s.scoring?.error??0;
  const a=s.summary,old=s.date!==Core.dateKey(),legacy=s.version!==Core.VERSION,counts=a.classes;
  const rows=Array.from({length:8},(_,i)=>{const ts=s.trials.filter(t=>t.segmentId===i),x=Core.summarize(ts);return `<tr><td>${i+1}</td><td>${Core.NAMES[s.rules[i]]}</td><td>${x.correct}</td><td>${x.error}</td><td>${x.timeout}</td><td>${rt(x.medianRT)}</td></tr>`;}).join('');
  const details=s.trials.map(t=>{const values=[colorNames[t.features[0]],shapes[t.features[1]],t.features[2]+1,borders[t.features[3]]].join('／');const label={correct:'正確',error:'錯誤',timeout:'逾時',unfinished:'終場未完成'}[t.result];return `<tr><td>${t.trialId}</td><td>${t.segmentId+1}</td><td>${(t.shownAtElapsedMs/1000).toFixed(2)} 秒</td><td>${Core.NAMES[t.activeRule]}</td><td>${values}</td><td>${t.chosenIndex===null?'—':t.chosenIndex+1}</td><td>${t.correctIndex+1}</td><td>${label}</td><td>${rt(t.responseTimeMs)}</td><td>${t.matchedFeatures.map(d=>Core.NAMES[d]).join('、')||'—'}</td><td>${t.excludedBefore.map(d=>Core.NAMES[d]).join('、')||'—'}</td><td>${Core.ERROR_NAMES[t.errorClass]||'—'}</td><td>${(t.referenceOrder||[0,1,2,3]).map(id=>{const f=s.refs[id];return [colorNames[f[0]],shapes[f[1]],f[2]+1,borders[f[3]]].join('/');}).join(' → ')}</td></tr>`;}).join('');
- setScreen('result',header(s.date+' · '+modeName(s.mode)+' · 本局結果')+notice()+`<section class="result-head"><p class="eyebrow">YOUR SESSION, IN REVIEW</p><span class="badge">${s.ordinal===1?'首次完成':'第 '+s.ordinal+' 次完成 · 重玩'}</span><h1>五分鐘，每一步都有線索。</h1><div class="big-score">${fmt(a.score)}</div><p class="tiny">${s.date} 的挑戰 · ${a.correct} 題答對 × 100 分<br>${saved?'已儲存在此瀏覽器，保留七天。':'尚未保存至本機。'}${s.priorInterruptedAttempts?'<br>此局之前有 '+s.priorInterruptedAttempts+' 次未完成嘗試。':''}</p></section><div class="metrics"><div class="metric"><strong>${pct(a.accuracy)}</strong><span>正確率</span><small>不含逾時</small></div><div class="metric"><strong>${a.correct} / ${a.error}</strong><span>答對 / 答錯</span></div><div class="metric"><strong>${a.timeout}</strong><span>逾時</span></div><div class="metric"><strong>${rt(a.medianRT)}</strong><span>典型答題時間</span><small>以中位數計算</small></div></div><p class="tiny">${a.unfinished?'最後一張未完成，不計為錯誤或逾時。':''}</p><div class="actions result-actions"><button class="primary" id="again">${old?'開始今日挑戰':legacy?'開始目前版本挑戰':'再挑戰一次'}</button><button class="secondary" id="back">返回首頁</button></div>${old?'<p class="tiny" style="text-align:center">此局已跨午夜，保留原挑戰成績；昨日題目不再開放重玩。</p>':''}<details class="details-panel" open><summary>本局行為回顧</summary><div class="details-content"><p class="tiny">此測驗僅提供真實回饋關係，僅供玩家參考。</p>${Core.reviewGroups(counts).map(g=>`<div class="analysis-row"><span>${g.name}</span><strong>${g.count} 次</strong></div><p class="tiny analysis-description">${g.description}</p><div class="track"><div style="width:${a.error?g.count/a.error*100:0}%"></div></div>`).join('')}<p class="tiny">遊玩中規則再次變動、誤觸或尚未注意回饋，都可能影響紀錄。</p></div></details><details class="details-panel"><summary>各階段表現</summary><div class="details-content"><div class="scroll-table"><table><thead><tr><th>區段</th><th>規則</th><th>正確</th><th>錯誤</th><th>逾時</th><th>典型答題時間</th></tr></thead><tbody>${rows}</tbody></table></div></div></details><details class="details-panel"><summary>逐題紀錄（${s.trials.length} 張）</summary><div class="details-content"><div class="scroll-table"><table><thead><tr><th>題次</th><th>區段</th><th>發牌時間</th><th>規則</th><th>卡片特徵</th><th>選擇</th><th>正解</th><th>結果</th><th>反應時間</th><th>匹配特徵</th><th>先前否定</th><th>分類</th><th>當題參考卡（位置 1–4）</th></tr></thead><tbody>${details}</tbody></table></div></div></details>`+footer());
+ setScreen('result',header(s.date+' · '+modeName(s.mode)+' · 本局結果')+notice()+`<section class="result-head"><p class="eyebrow">YOUR SESSION, IN REVIEW</p><span class="badge">${s.ordinal===1?'首次完成':'第 '+s.ordinal+' 次完成 · 重玩'}</span><h1>${minutes===3?'三':minutes===5?'五':minutes}分鐘，每一步都有線索。</h1><div class="big-score">${fmt(a.score)}</div><p class="tiny">${s.date} 的挑戰 · ${a.correct} 題答對 × 100 分${penalty?' − '+a.error+' 題答錯 × '+Math.abs(penalty)+' 分':''}<br>${saved?'已儲存在此瀏覽器，保留七天。':'尚未保存至本機。'}${s.priorInterruptedAttempts?'<br>此局之前有 '+s.priorInterruptedAttempts+' 次未完成嘗試。':''}</p></section><div class="metrics"><div class="metric"><strong>${pct(a.accuracy)}</strong><span>正確率</span><small>不含逾時</small></div><div class="metric"><strong>${a.correct} / ${a.error}</strong><span>答對 / 答錯</span></div><div class="metric"><strong>${a.timeout}</strong><span>逾時</span></div><div class="metric"><strong>${rt(a.medianRT)}</strong><span>典型答題時間</span><small>以中位數計算</small></div></div><p class="tiny">${a.unfinished?'最後一張未完成，不計為錯誤或逾時。':''}</p><div class="actions result-actions"><button class="primary" id="again">${old?'開始今日挑戰':legacy?'開始目前版本挑戰':'再挑戰一次'}</button><button class="secondary" id="back">返回首頁</button></div>${old?'<p class="tiny" style="text-align:center">此局已跨午夜，保留原挑戰成績；昨日題目不再開放重玩。</p>':''}<details class="details-panel" open><summary>本局行為回顧</summary><div class="details-content"><p class="tiny">此測驗僅提供真實回饋關係，僅供玩家參考。</p>${Core.reviewGroups(counts).map(g=>`<div class="analysis-row"><span>${g.name}</span><strong>${g.count} 次</strong></div><p class="tiny analysis-description">${g.description}</p><div class="track"><div style="width:${a.error?g.count/a.error*100:0}%"></div></div>`).join('')}<p class="tiny">遊玩中規則再次變動、誤觸或尚未注意回饋，都可能影響紀錄。</p></div></details><details class="details-panel"><summary>各階段表現</summary><div class="details-content"><div class="scroll-table"><table><thead><tr><th>區段</th><th>規則</th><th>正確</th><th>錯誤</th><th>逾時</th><th>典型答題時間</th></tr></thead><tbody>${rows}</tbody></table></div></div></details><details class="details-panel"><summary>逐題紀錄（${s.trials.length} 張）</summary><div class="details-content"><div class="scroll-table"><table><thead><tr><th>題次</th><th>區段</th><th>發牌時間</th><th>規則</th><th>卡片特徵</th><th>選擇</th><th>正解</th><th>結果</th><th>反應時間</th><th>匹配特徵</th><th>先前否定</th><th>分類</th><th>當題參考卡（位置 1–4）</th></tr></thead><tbody>${details}</tbody></table></div></div></details>`+footer());
  $('again').onclick=start;$('back').onclick=home;
 }
 async function historyView(){
  await refreshRecords();const groups=[...new Set(records.map(s=>s.challengeId))];
- setScreen('history',header()+notice()+`<p class="eyebrow">YOUR LOCAL RECORDS</p><h1 style="font-size:36px">最近七天的足跡</h1><p class="intro">首次完成與重玩，各自留下紀錄。<br>資料只存在這個瀏覽器，不會上傳。</p><div class="actions" style="margin-bottom:24px"><button class="secondary" id="back">返回首頁</button>${records.length?'<button class="textbtn danger" id="clear">清除所有本機紀錄</button>':''}</div>${groups.length?groups.map(key=>{const group=records.filter(s=>s.challengeId===key).sort((a,b)=>a.ordinal-b.ordinal),first=group.find(s=>s.ordinal===1),replay=group.filter(s=>s.ordinal>1),best=replay.length?Math.max(...replay.map(s=>s.summary.score)):null;return `<section class="panel"><h3>${esc(group[0].date)} · ${modeName(group[0].mode)} <span class="tiny">${group[0].version===Core.VERSION?'目前題目':'舊版題目'}</span></h3><p class="tiny">首次完成 ${first?fmt(first.summary.score):'—'} 分 · 重玩最佳 ${best===null?'—':fmt(best)} 分</p>${group.map(s=>`<div class="history-item"><div><strong>${s.ordinal===1?'首次完成':'重玩 · 第 '+s.ordinal+' 次完成'}</strong><small>${esc(new Date(s.completedAt).toLocaleString('zh-TW',{timeZone:'Asia/Taipei',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}))}</small></div><span class="history-score">${fmt(s.summary.score)}</span><button class="secondary view-record" data-id="${esc(s.id)}">查看結果</button></div>`).join('')}</section>`;}).join(''):'<div class="panel empty">還沒有完成紀錄。<br>給自己五分鐘，留下第一個成績。</div>'}`+footer());
+ setScreen('history',header()+notice()+`<p class="eyebrow">YOUR LOCAL RECORDS</p><h1 style="font-size:36px">最近七天的足跡</h1><p class="intro">首次完成與重玩，各自留下紀錄。<br>資料只存在這個瀏覽器，不會上傳。</p><div class="actions" style="margin-bottom:24px"><button class="secondary" id="back">返回首頁</button>${records.length?'<button class="textbtn danger" id="clear">清除所有本機紀錄</button>':''}</div>${groups.length?groups.map(key=>{const group=records.filter(s=>s.challengeId===key).sort((a,b)=>a.ordinal-b.ordinal),first=group.find(s=>s.ordinal===1),replay=group.filter(s=>s.ordinal>1),best=replay.length?Math.max(...replay.map(s=>s.summary.score)):null;return `<section class="panel"><h3>${esc(group[0].date)} · ${modeName(group[0].mode)} <span class="tiny">${group[0].version===Core.VERSION?'目前題目':'舊版題目'}</span></h3><p class="tiny">首次完成 ${first?fmt(first.summary.score):'—'} 分 · 重玩最佳 ${best===null?'—':fmt(best)} 分</p>${group.map(s=>`<div class="history-item"><div><strong>${s.ordinal===1?'首次完成':'重玩 · 第 '+s.ordinal+' 次完成'}</strong><small>${esc(new Date(s.completedAt).toLocaleString('zh-TW',{timeZone:'Asia/Taipei',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}))}</small></div><span class="history-score">${fmt(s.summary.score)}</span><button class="secondary view-record" data-id="${esc(s.id)}">查看結果</button></div>`).join('')}</section>`;}).join(''):'<div class="panel empty">還沒有完成紀錄。<br>給自己三分鐘，留下第一個成績。</div>'}`+footer());
  $('back').onclick=home;document.querySelectorAll('.view-record').forEach(b=>b.onclick=()=>{const s=records.find(s=>s.id===b.dataset.id);resultView(s,s.saved!==false);});if($('clear'))$('clear').onclick=confirmClear;
 }
 function confirmClear(){
