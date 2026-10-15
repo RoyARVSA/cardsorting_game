@@ -168,6 +168,7 @@ const clock=ms=>{const s=Math.max(0,Math.ceil(ms/1000));return String(Math.floor
 const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
 const prefix='daily-sort:'+location.pathname+':',DBNAME=prefix+'records';
 let db=null,storageWarning='',screen='home',game=null,records=[],memoryRecords=[],attempts=[],lastDate=Core.dateKey(),feedbackTimers=[],frameHandle=0;
+let backgroundFeedback=null;
 let selectedMode='fixed';
 const modeName=mode=>mode==='moving'?'每題換位':'固定位置';
 let tabId;try{tabId=sessionStorage.getItem(prefix+'tab')||uid();sessionStorage.setItem(prefix+'tab',tabId);}catch{tabId=uid();}
@@ -213,7 +214,7 @@ async function recover(){
 }
 function markActive(a){try{localStorage.setItem(markerKey,JSON.stringify(a));}catch{storageWarning=storageWarning||'無法保存執行標記；重新整理後的未完成次數可能不完整。';}}
 function unmark(id){try{const current=JSON.parse(localStorage.getItem(markerKey)||'null');if(!id||current?.id===id)localStorage.removeItem(markerKey);}catch{}}
-function setScreen(name,html,cls=''){screen=name;app.className='';app.innerHTML=`<main class="shell ${cls}">${html}</main>`;window.scrollTo(0,0);}
+function setScreen(name,html,cls=''){backgroundFeedback?.cancel();backgroundFeedback=null;feedbackTimers.forEach(clearTimeout);screen=name;app.className='';app.innerHTML=`<main class="shell ${cls}">${html}</main>`;window.scrollTo(0,0);}
 function todayRecords(){return records.filter(s=>s.challengeId===Core.makeChallenge(Core.dateKey(),selectedMode).id);}
 function home(){
  game=null;lastDate=Core.dateKey();const today=todayRecords(),first=today.find(s=>s.ordinal===1),replays=today.filter(s=>s.ordinal>1),best=replays.length?Math.max(...replays.map(s=>s.summary.score)):null;
@@ -261,7 +262,20 @@ function flushFeedback(){const g=game;if(!g||!g.pendingFeedback)return;const t=g
 function feedback(t){
  feedbackTimers.forEach(clearTimeout);const el=$('feedback');if(!el)return;
  el.textContent=t.result==='correct'?'上一題：✓ 正確 +100':t.result==='error'?'上一題：× 錯誤 −40':'上一題：逾時';el.className='feedback show'+(t.result==='correct'?'':' bad');
- app.className=t.result==='correct'?'feedback-success':'feedback-error';
+ backgroundFeedback?.cancel();backgroundFeedback=null;
+ const positive=t.result==='correct';
+ if(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches||!app.animate){
+  app.className=positive?'feedback-success':'feedback-error';
+ }else{
+  app.className='';
+  const pale=positive?'#e6efe5':'#f5e7e3';
+  backgroundFeedback=app.animate([
+   {backgroundColor:positive?'#b9d8b8':'#eab8b0',offset:0,easing:'ease-out'},
+   {backgroundColor:pale,offset:150/1200},
+   {backgroundColor:pale,offset:800/1200,easing:'ease-out'},
+   {backgroundColor:'var(--bg)',offset:1}
+  ],{duration:1200,fill:'none'});
+ }
  feedbackTimers=[setTimeout(()=>{if(screen==='game'){el.classList.add('fade');app.className='';}},800),setTimeout(()=>{if(screen==='game')el.className='feedback';},1200)];
 }
 function updateClocks(elapsed){if(screen!=='game')return;$('total-time').textContent=clock(Core.DURATION-elapsed);$('total-time').classList.toggle('low',elapsed>=Core.DURATION-20000);if(game.current){const left=Math.max(0,game.current.deadlineElapsedMs-elapsed);$('trial-time').textContent=(left/1000).toFixed(1);$('trial-fill').style.width=(left/100)+'%';$('trial-fill').style.background=left<3000?'var(--bad)':'var(--green)';}}
